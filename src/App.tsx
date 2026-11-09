@@ -12,8 +12,11 @@ import { EvalBar } from './components/Board/EvalBar';
 import { PlayerBanner } from './components/Board/PlayerBanner';
 import { ReviewOverview } from './components/Review/ReviewOverview';
 import { ActiveReviewPanel } from './components/Review/ActiveReviewPanel';
+import { FenReviewPanel } from './components/Review/FenReviewPanel';
+import { FenBar } from './components/Board/FenBar';
 import { BoardArrow } from './components/Board/ArrowOverlay';
-import { Upload, RefreshCw } from 'lucide-react';
+import { getGroqGameTutorAnalysis, getGroqFenAssessment, GroqFenAssessment } from './services/groqTutorService';
+import { Upload, RefreshCw, Sparkles, BookOpen } from 'lucide-react';
 
 export default function App() {
   const [boardTheme, setBoardTheme] = useState<'purple' | 'green' | 'dark_wood' | 'glass' | 'tournament'>('purple');
@@ -22,8 +25,13 @@ export default function App() {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
 
-  // Review flow state: 'overview' (Images 1 & 2) vs 'active' (Images 3 & 4)
-  const [screenMode, setScreenMode] = useState<'overview' | 'active'>('overview');
+  // Review flow state: 'overview' vs 'active' vs 'fen_mode'
+  const [screenMode, setScreenMode] = useState<'overview' | 'active' | 'fen_mode'>('overview');
+
+  // FEN Analysis State
+  const [customFen, setCustomFen] = useState<string>('');
+  const [fenAssessment, setFenAssessment] = useState<GroqFenAssessment | null>(null);
+  const [isFenLoading, setIsFenLoading] = useState(false);
 
   // Analysis & Key Moments State
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -80,6 +88,36 @@ export default function App() {
     runInitialAnalysis(defaultPgn);
   }, []);
 
+  const isFenString = (str: string): boolean => {
+    const trimmed = str.trim();
+    const parts = trimmed.split(/\s+/);
+    if (parts.length < 2) return false;
+    const ranks = parts[0].split('/');
+    return ranks.length === 8 && (parts[1] === 'w' || parts[1] === 'b');
+  };
+
+  const loadFenPosition = async (fen: string) => {
+    try {
+      const cleanFen = fen.trim();
+      const testChess = new Chess(cleanFen);
+      setGame(testChess);
+      setSelectedSquare(null);
+      setLastMove(null);
+      setScreenMode('fen_mode');
+      setCustomFen(cleanFen);
+      setOrientation(testChess.turn());
+      setIsFenLoading(true);
+
+      const assessment = await getGroqFenAssessment(cleanFen);
+      setFenAssessment(assessment);
+    } catch (err) {
+      console.error('Invalid FEN:', err);
+      alert('Invalid FEN format. Please enter a valid chess FEN string.');
+    } finally {
+      setIsFenLoading(false);
+    }
+  };
+
   const runInitialAnalysis = async (pgnString: string) => {
     setIsAnalyzing(true);
     setAnalysisProgress({ current: 0, total: 100, pct: 0 });
@@ -99,6 +137,38 @@ export default function App() {
       setScreenMode('overview');
       goToPly(-1, res);
       setCurrentKeyMomentIdx(0);
+
+      // In the background, upload to Groq to extract the instructional moments & tutor commentary
+      getGroqGameTutorAnalysis(pgnString, res.moves)
+        .then(groqRes => {
+          if (groqRes && groqRes.moments && groqRes.moments.length > 0) {
+            const groqKm: KeyMoment[] = groqRes.moments.map(gm => {
+              const move = res.moves[gm.plyIndex];
+              const type = (move ? move.classification : 'mistake') as any;
+              return {
+                plyIndex: gm.plyIndex,
+                type,
+                headline: gm.headline,
+                commentary: gm.commentary,
+                suggestedMove: gm.suggestedMove || (move?.bestMoveUci ? move.bestMoveUci.slice(0, 4) : undefined),
+              };
+            });
+
+            // Keep opening book moments if available
+            const firstBook = km.find(m => m.type === 'first_book');
+            const lastBook = km.find(m => m.type === 'last_book');
+            if (firstBook && !groqKm.some(m => m.plyIndex === firstBook.plyIndex)) {
+              groqKm.unshift(firstBook);
+            }
+            if (lastBook && !groqKm.some(m => m.plyIndex === lastBook.plyIndex)) {
+              groqKm.splice(1, 0, lastBook);
+            }
+
+            groqKm.sort((a, b) => a.plyIndex - b.plyIndex);
+            setKeyMoments(groqKm);
+          }
+        })
+        .catch(err => console.warn('Groq tutor background error:', err));
     } catch (err: any) {
       console.error('Analysis error:', err);
     } finally {
@@ -107,9 +177,51 @@ export default function App() {
     }
   };
 
-  const handlePgnSubmit = () => {
+  const handleInputSubmit = (text: string) => {
     setShowPgnInput(false);
-    runInitialAnalysis(customPgn);
+    if (isFenString(text)) {
+      loadFenPosition(text);
+    } else {
+      runInitialAnalysis(text);
+    }
+  };
+
+  const handleSquareClick = (square: string) => {
+    if (screenMode !== 'fen_mode') return;
+
+    if (!selectedSquare) {
+      const piece = game.get(square as any);
+      if (piece && piece.color === game.turn()) {
+        setSelectedSquare(square);
+      }
+    } else {
+      if (selectedSquare === square) {
+        setSelectedSquare(null);
+        return;
+      }
+      try {
+        const move = game.move({
+          from: selectedSquare,
+          to: square,
+          promotion: 'q',
+        });
+        if (move) {
+          playMoveSound(move.san);
+          setLastMove({ from: move.from, to: move.to });
+          setSelectedSquare(null);
+          setGame(new Chess(game.fen()));
+        } else {
+          const piece = game.get(square as any);
+          if (piece && piece.color === game.turn()) {
+            setSelectedSquare(square);
+          } else {
+            setSelectedSquare(null);
+          }
+        }
+      } catch {
+        setSelectedSquare(null);
+      }
+    }
   };
 
   // Keyboard Navigation: Left / Right moves 1 ply; Space toggles autoplay
@@ -282,7 +394,11 @@ export default function App() {
               <h1 className="text-xl md:text-2xl font-bold tracking-tight text-white flex items-center gap-2">
                 <span>Chess.com Analysis Mode</span>
                 <span className="text-xs font-semibold px-2 py-0.5 rounded bg-[#312e2b] text-[#81b64c] border border-[#403d39]">
-                  {screenMode === 'overview' ? 'Review Summary' : 'Active Coach Review'}
+                  {screenMode === 'overview'
+                    ? 'Review Summary'
+                    : screenMode === 'active'
+                    ? 'Active Coach Review'
+                    : 'FEN Position Study'}
                 </span>
               </h1>
             </div>
@@ -293,8 +409,8 @@ export default function App() {
               onClick={() => setShowPgnInput(!showPgnInput)}
               className="px-3 py-1.5 bg-[#272522] hover:bg-[#34322e] border border-[#3b3834] rounded text-xs font-semibold text-gray-200 transition cursor-pointer flex items-center gap-1.5"
             >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Load PGN</span>
+              <Upload className="w-3.5 h-3.5 text-[#81b64c]" />
+              <span>Load Game / FEN</span>
             </button>
             <button
               onClick={() => setOrientation(o => (o === 'w' ? 'b' : 'w'))}
@@ -318,37 +434,57 @@ export default function App() {
           </div>
         </header>
 
-        {/* Optional Custom PGN Input Panel */}
+        {/* Custom PGN or FEN Input Modal */}
         {showPgnInput && (
-          <div className="bg-[#272522] p-4 rounded-lg border border-[#3b3834] space-y-2 shadow-xl">
-            <div className="flex justify-between items-center text-xs font-bold text-gray-300">
-              <span>Paste Custom PGN or Game Record:</span>
-              <button
-                onClick={() => setCustomPgn(defaultPgn)}
-                className="text-[#81b64c] hover:underline"
-              >
-                Reset to Caro-Kann Game
-              </button>
+          <div className="bg-[#272522] p-4 rounded-lg border border-[#3b3834] space-y-3 shadow-xl">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs font-bold text-gray-300">
+              <span className="flex items-center gap-1.5">
+                <BookOpen className="w-4 h-4 text-[#81b64c]" />
+                <span>Paste Custom PGN or FEN Position:</span>
+              </span>
+              <div className="flex items-center gap-2 text-[11px]">
+                <button
+                  onClick={() => setCustomPgn(defaultPgn)}
+                  className="text-gray-400 hover:text-[#81b64c] transition"
+                >
+                  Caro-Kann (PGN)
+                </button>
+                <span>•</span>
+                <button
+                  onClick={() =>
+                    setCustomPgn('rn2kb1r/pp3ppp/2p1pn2/q5B1/3P2b1/2NB1N2/PPP2PPP/R2QK2R w KQkq - 0 8')
+                  }
+                  className="text-gray-400 hover:text-[#81b64c] transition"
+                >
+                  Opera Tactic (FEN)
+                </button>
+              </div>
             </div>
             <textarea
               value={customPgn}
               onChange={(e) => setCustomPgn(e.target.value)}
               rows={4}
+              placeholder="Paste PGN (1. e4 c6 ...) or FEN (r1bqkbnr/pppp1ppp/... w KQkq - 0 1)"
               className="w-full bg-[#1e1c18] border border-[#3b3834] rounded p-2 text-xs text-gray-200 font-mono resize-none focus:outline-none focus:border-[#81b64c]"
             />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowPgnInput(false)}
-                className="px-3 py-1.5 bg-[#312e2b] hover:bg-[#3d3a36] text-gray-300 rounded text-xs font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handlePgnSubmit}
-                className="px-4 py-1.5 bg-[#81b64c] hover:bg-[#96c85e] text-white font-bold rounded text-xs shadow"
-              >
-                Load & Review Game
-              </button>
+            <div className="flex justify-between items-center pt-1">
+              <span className="text-[11px] text-gray-400">
+                {isFenString(customPgn) ? '⚡ Detected FEN format (Position Study)' : '📖 Detected PGN format (Game Review)'}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowPgnInput(false)}
+                  className="px-3 py-1.5 bg-[#312e2b] hover:bg-[#3d3a36] text-gray-300 rounded text-xs font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleInputSubmit(customPgn)}
+                  className="px-4 py-1.5 bg-[#81b64c] hover:bg-[#96c85e] text-white font-bold rounded text-xs shadow cursor-pointer"
+                >
+                  {isFenString(customPgn) ? 'Load FEN Position' : 'Load & Review Game'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -392,10 +528,13 @@ export default function App() {
                         }
                       : null
                   }
-                  onSquareClick={() => {}}
+                  onSquareClick={handleSquareClick}
                 />
               </div>
             </div>
+
+            {/* FEN Bar with 1-Click Copy and View */}
+            <FenBar fen={game.fen()} />
 
             {/* Bottom Player Banner (White if orientation is White, Black if flipped) */}
             <div className="w-full max-w-[560px]">
@@ -409,9 +548,26 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right Column: Exact Replica of Image 1 & 2 (Overview) OR Image 3 & 4 (Active Review) */}
+          {/* Right Column: FEN Review Panel OR Overview OR Active Review */}
           <div className="lg:col-span-5">
-            {isAnalyzing && !analysisResult ? (
+            {screenMode === 'fen_mode' ? (
+              <FenReviewPanel
+                fen={game.fen()}
+                assessment={fenAssessment}
+                isLoading={isFenLoading}
+                onReset={() => {
+                  if (customFen) {
+                    loadFenPosition(customFen);
+                  }
+                }}
+                onExit={() => {
+                  setScreenMode('overview');
+                  if (analysisResult) {
+                    goToPly(currentPlyIndex);
+                  }
+                }}
+              />
+            ) : isAnalyzing && !analysisResult ? (
               <div className="bg-[#262421] rounded-xl p-8 border border-[#3b3834] flex flex-col items-center justify-center space-y-4 shadow-2xl min-h-[460px]">
                 <div className="w-12 h-12 rounded-full border-4 border-[#81b64c] border-t-transparent animate-spin" />
                 <div className="text-center space-y-1">

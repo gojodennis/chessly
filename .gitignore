@@ -26,5 +26,9 @@ pnpm-debug.log*
 # Editor & OS files
 .vscode/
 .idea/
+.agents/
+.claude/
+skills-lock.json
 .DS_Store
 Thumbs.db
+

@@ -41,6 +41,7 @@ export const ActiveReviewPanel: React.FC<ActiveReviewPanelProps> = ({
   isPlaying,
   onSelectPly,
   onNextKeyMoment,
+  onPrevKeyMoment,
   onTogglePlay,
   onBackToOverview,
   onFirst,
@@ -48,7 +49,6 @@ export const ActiveReviewPanel: React.FC<ActiveReviewPanelProps> = ({
   onNext,
   onLast,
 }) => {
-  const [showExplanation, setShowExplanation] = useState(false);
   const activeRowRef = useRef<HTMLDivElement | null>(null);
 
   const activeMove = currentPly >= 0 && currentPly < moves.length ? moves[currentPly] : null;
@@ -72,15 +72,22 @@ export const ActiveReviewPanel: React.FC<ActiveReviewPanelProps> = ({
     return cp >= 0 ? `+${val}` : `${val}`;
   };
 
-  // Determine current headline text
+  // Determine current headline, commentary, and recommended move
   const currentKeyMoment = keyMoments.find(km => km.plyIndex === currentPly);
   let headlineText = '';
+  let commentaryText = '';
+  let suggestedMove = '';
+
   if (currentKeyMoment) {
     headlineText = currentKeyMoment.headline;
+    commentaryText = currentKeyMoment.commentary || activeMove?.tutorFeedback.advice || '';
+    suggestedMove = currentKeyMoment.suggestedMove || '';
   } else if (activeMove) {
     headlineText = `${activeMove.san} was played`;
+    commentaryText = activeMove.tutorFeedback.advice;
   } else {
     headlineText = "Game review ready. Let's begin!";
+    commentaryText = "Click 'Next Key Move' to step directly through the tutor's lessons from this game.";
   }
 
   // Memoize paired moves by full turn for the 2-column table
@@ -139,7 +146,7 @@ export const ActiveReviewPanel: React.FC<ActiveReviewPanelProps> = ({
           </div>
 
           {/* Speech Bubble */}
-          <div className="relative flex-1 bg-white text-black px-3.5 py-2.5 rounded-xl shadow-md before:content-[''] before:absolute before:top-3.5 before:-left-2 before:w-0 before:h-0 before:border-y-6 before:border-y-transparent before:border-r-6 before:border-r-white">
+          <div className="relative flex-1 bg-white text-black px-3.5 py-3 rounded-xl shadow-md before:content-[''] before:absolute before:top-3.5 before:-left-2 before:w-0 before:h-0 before:border-y-6 before:border-y-transparent before:border-r-6 before:border-r-white space-y-1.5">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 {activeMove && (
@@ -149,7 +156,7 @@ export const ActiveReviewPanel: React.FC<ActiveReviewPanelProps> = ({
                     className="w-4 h-4 flex-shrink-0"
                   />
                 )}
-                <span className="text-xs font-semibold leading-tight">{headlineText}</span>
+                <span className="text-xs font-bold leading-tight text-gray-900">{headlineText}</span>
               </div>
 
               {activeMove && (
@@ -159,33 +166,43 @@ export const ActiveReviewPanel: React.FC<ActiveReviewPanelProps> = ({
               )}
             </div>
 
-            {/* Extended Explanation if toggled */}
-            {showExplanation && activeMove && (
-              <div className="mt-2 pt-2 border-t border-gray-200 text-[11px] text-gray-700 leading-snug">
-                {activeMove.tutorFeedback.advice}
+            {/* Direct Tutor Lesson Commentary */}
+            {commentaryText && (
+              <p className="text-[12px] text-gray-800 leading-snug font-normal">
+                {commentaryText}
+              </p>
+            )}
+
+            {/* Suggested Move if applicable */}
+            {suggestedMove && (
+              <div className="pt-1 flex items-center gap-1.5 text-[11px] text-[#4d7c22] font-semibold">
+                <span className="text-gray-500">Tutor Recommendation:</span>
+                <span className="bg-[#eef8e6] text-[#3c6b16] px-1.5 py-0.2 rounded border border-[#d2edbf] font-mono font-bold">
+                  {suggestedMove}
+                </span>
               </div>
             )}
           </div>
         </div>
 
-        {/* Primary Action Buttons: Explain vs Next Key Moment */}
+        {/* Primary Action Buttons: Prev Key Moment vs Big Green Next Key Move */}
         <div className="flex items-center gap-2">
-          {/* Explain Button */}
           <button
-            onClick={() => setShowExplanation(!showExplanation)}
-            className="flex-1 py-2 bg-[#312e2b] hover:bg-[#3d3a36] active:bg-[#252320] border border-[#403d39] text-gray-200 font-semibold text-xs rounded-md shadow transition cursor-pointer flex items-center justify-center gap-1.5"
+            onClick={onPrevKeyMoment}
+            className="px-3 py-2 bg-[#312e2b] hover:bg-[#3d3a36] active:bg-[#252320] border border-[#403d39] text-gray-200 font-semibold text-xs rounded-md shadow transition cursor-pointer flex items-center justify-center gap-1"
+            title="Previous Key Move"
           >
-            <Lightbulb className="w-3.5 h-3.5 text-[#e58f2a]" />
-            <span>{showExplanation ? 'Hide' : 'Explain'}</span>
+            <ChevronLeft className="w-3.5 h-3.5" />
+            <span>Prev</span>
           </button>
 
-          {/* Big Green NEXT Button (Jumps to Next Key Moment) */}
+          {/* Big Green NEXT Button (Steps directly to moves the tutor selected) */}
           <button
             onClick={onNextKeyMoment}
-            className="flex-[1.5] py-2 bg-[#81b64c] hover:bg-[#96c85e] active:bg-[#6f9e40] text-white font-bold text-xs rounded-md shadow-md transition cursor-pointer flex items-center justify-center gap-1.5 border border-[#6f9e40]"
+            className="flex-1 py-2 bg-[#81b64c] hover:bg-[#96c85e] active:bg-[#6f9e40] text-white font-bold text-xs rounded-md shadow-md transition cursor-pointer flex items-center justify-center gap-1.5 border border-[#6f9e40]"
           >
+            <span>Next Key Move</span>
             <ArrowRight className="w-4 h-4" />
-            <span>Next</span>
           </button>
         </div>
 
