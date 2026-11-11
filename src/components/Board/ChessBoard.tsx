@@ -51,38 +51,55 @@ const SquareView = memo<SquareViewProps>(({
   badgeClassification,
   onClick,
 }) => {
+  // Determine square highlight color
+  let highlightClass = '';
+  if (isSelected) {
+    highlightClass = 'bg-[rgba(247,247,105,0.6)]';
+  } else if (isLastTo && badgeClassification) {
+    // Error tint matching Chess.com (e.g. orange on h6 for mistake in Image 3)
+    if (badgeClassification === 'mistake') {
+      highlightClass = 'bg-[rgba(235,115,75,0.48)]';
+    } else if (badgeClassification === 'blunder' || badgeClassification === 'miss') {
+      highlightClass = 'bg-[rgba(215,55,50,0.48)]';
+    } else if (badgeClassification === 'inaccuracy') {
+      highlightClass = 'bg-[rgba(240,193,92,0.42)]';
+    } else if (badgeClassification === 'brilliant') {
+      highlightClass = 'bg-[rgba(27,172,166,0.45)]';
+    } else if (badgeClassification === 'best' || badgeClassification === 'great') {
+      highlightClass = 'bg-[rgba(129,182,76,0.4)]';
+    } else {
+      highlightClass = 'bg-[rgba(255,255,0,0.35)]';
+    }
+  } else if (isLastFrom || isLastTo) {
+    highlightClass = 'bg-[rgba(255,255,0,0.32)]';
+  }
+
   return (
     <div
       onClick={() => onClick(square)}
-      className={`relative flex items-center justify-center cursor-pointer transition-colors duration-75 ${
-        isSelected
-          ? 'bg-[rgba(247,247,105,0.6)]'
-          : isLastFrom || isLastTo
-          ? 'bg-[rgba(255,255,0,0.35)]'
-          : ''
-      }`}
+      className={`relative flex items-center justify-center cursor-pointer transition-colors duration-75 ${highlightClass}`}
     >
       {/* King in Check Glow */}
       {isKingInCheck && (
         <div className="absolute inset-0 bg-red-600/60 rounded-full blur-sm animate-pulse pointer-events-none" />
       )}
 
-      {/* Rank label */}
+      {/* Rank label (top-left) */}
       {showRank && (
         <span
           className={`absolute top-0.5 left-1 text-[11px] font-bold select-none pointer-events-none ${
-            isDark ? 'text-[#eeeed2]' : 'text-[#769656]'
+            isDark ? 'text-white' : 'text-[#887dbe]'
           }`}
         >
           {rankLabel}
         </span>
       )}
 
-      {/* File label */}
+      {/* File label (bottom-right) */}
       {showFile && (
         <span
           className={`absolute bottom-0.5 right-1 text-[11px] font-bold select-none pointer-events-none ${
-            isDark ? 'text-[#eeeed2]' : 'text-[#769656]'
+            isDark ? 'text-white' : 'text-[#887dbe]'
           }`}
         >
           {fileLabel}
@@ -111,13 +128,13 @@ const SquareView = memo<SquareViewProps>(({
         />
       )}
 
-      {/* Classification Badge on Destination Square */}
+      {/* Classification Badge on Destination Square (Matches Image 3 on square h6) */}
       {badgeClassification && (
-        <div className="absolute -top-1.5 -right-1.5 w-6 h-6 z-20 transition-transform transform scale-110">
+        <div className="absolute -top-1.5 -right-1.5 w-6 h-6 z-20 transition-transform transform scale-110 drop-shadow-md">
           <img
             src={`/assets/badges/${badgeClassification}.svg`}
             alt={badgeClassification}
-            className="w-full h-full drop-shadow filter"
+            className="w-full h-full filter"
           />
         </div>
       )}
@@ -154,7 +171,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = memo(({
   const displayRanks = orientation === 'w' ? [8, 7, 6, 5, 4, 3, 2, 1] : [1, 2, 3, 4, 5, 6, 7, 8];
 
   return (
-    <div className="relative w-full aspect-square rounded-md overflow-hidden shadow-2xl border-4 border-[#2b2926] select-none">
+    <div className="relative w-full aspect-square rounded-sm overflow-hidden shadow-2xl border-2 border-[#2b2926] select-none">
       {/* Board Theme Background Image */}
       <img
         src={`/assets/boards/${theme}.png`}

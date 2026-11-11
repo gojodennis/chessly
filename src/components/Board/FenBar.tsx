@@ -81,3 +81,4 @@ export const FenBar: React.FC<FenBarProps> = ({ fen }) => {
     </div>
   );
 };
+

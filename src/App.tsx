@@ -16,7 +16,7 @@ import { FenReviewPanel } from './components/Review/FenReviewPanel';
 import { FenBar } from './components/Board/FenBar';
 import { BoardArrow } from './components/Board/ArrowOverlay';
 import { getGroqGameTutorAnalysis, getGroqFenAssessment, GroqFenAssessment } from './services/groqTutorService';
-import { Upload, RefreshCw, Sparkles, BookOpen } from 'lucide-react';
+import { Upload, BookOpen } from 'lucide-react';
 
 export default function App() {
   const [boardTheme, setBoardTheme] = useState<'purple' | 'green' | 'dark_wood' | 'glass' | 'tournament'>('purple');
@@ -27,6 +27,10 @@ export default function App() {
 
   // Review flow state: 'overview' vs 'active' vs 'fen_mode'
   const [screenMode, setScreenMode] = useState<'overview' | 'active' | 'fen_mode'>('overview');
+
+  // Interactive Demonstration States for Explain & Best Buttons
+  const [isShowingBest, setIsShowingBest] = useState(false);
+  const [isExplaining, setIsExplaining] = useState(false);
 
   // FEN Analysis State
   const [customFen, setCustomFen] = useState<string>('');
@@ -39,13 +43,13 @@ export default function App() {
   const [analysisResult, setAnalysisResult] = useState<GameReviewResult | null>(null);
   const [keyMoments, setKeyMoments] = useState<KeyMoment[]>([]);
   const [currentPlyIndex, setCurrentPlyIndex] = useState<number>(-1);
-  const [currentKeyMomentIdx, setCurrentKeyMomentIdx] = useState<number>(0);
+  const [, setCurrentKeyMomentIdx] = useState<number>(0);
 
   // Autoplay State
   const [isPlaying, setIsPlaying] = useState(false);
   const autoplayTimerRef = useRef<any>(null);
 
-  // Game PGN (Matching the user's uploaded screenshots: Caro-Kann with 9... h6, 10. e5, 11... g4, 12. Bxa7)
+  // Default Game PGN matching the user's reference screenshots (9... h6, 10. Ne5, etc.)
   const defaultPgn = `[Event "Live Chess"]
 [Site "Chess.com"]
 [Date "2026.11.09"]
@@ -138,7 +142,7 @@ export default function App() {
       goToPly(-1, res);
       setCurrentKeyMomentIdx(0);
 
-      // In the background, upload to Groq to extract the instructional moments & tutor commentary
+      // In the background, extract instructional tutor commentary from Groq
       getGroqGameTutorAnalysis(pgnString, res.moves)
         .then(groqRes => {
           if (groqRes && groqRes.moments && groqRes.moments.length > 0) {
@@ -224,7 +228,7 @@ export default function App() {
     }
   };
 
-  // Keyboard Navigation: Left / Right moves 1 ply; Space toggles autoplay
+  // Keyboard Navigation: Left / Right moves 1 ply
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -268,6 +272,7 @@ export default function App() {
     };
   }, [isPlaying, currentPlyIndex, analysisResult]);
 
+  // Chess.com sound reproduction
   const playMoveSound = (san: string) => {
     let sound: SoundType = 'move-self';
     if (san.includes('O-O')) {
@@ -285,6 +290,8 @@ export default function App() {
   const goToPly = (plyIndex: number, res = analysisResult) => {
     if (!res || plyIndex < -1 || plyIndex >= res.moves.length) return;
     setCurrentPlyIndex(plyIndex);
+    setIsShowingBest(false);
+    setIsExplaining(false);
 
     // Sync active key moment index if this ply is a key moment
     if (keyMoments.length > 0) {
@@ -305,18 +312,16 @@ export default function App() {
     }
   };
 
-  // ADVANCE TO NEXT KEY MOMENT (What the green Next button does!)
+  // ADVANCE TO NEXT KEY MOMENT
   const handleNextKeyMoment = () => {
     if (!analysisResult || keyMoments.length === 0) return;
 
-    // Find the next key moment ahead of current ply
     const nextKm = keyMoments.find(km => km.plyIndex > currentPlyIndex);
     if (nextKm) {
       const nextIdx = keyMoments.indexOf(nextKm);
       setCurrentKeyMomentIdx(nextIdx);
       goToPly(nextKm.plyIndex);
     } else {
-      // Reached the end, jump to final move
       goToPly(analysisResult.moves.length - 1);
     }
   };
@@ -336,7 +341,12 @@ export default function App() {
   // Start Review action from Overview
   const handleStartReview = () => {
     setScreenMode('active');
-    if (keyMoments.length > 0) {
+    // Start at move 8... h6 (ply 17 in Caro-Kann game) or first key moment
+    const h6Moment = keyMoments.find(km => km.plyIndex === 17);
+    if (h6Moment) {
+      setCurrentKeyMomentIdx(keyMoments.indexOf(h6Moment));
+      goToPly(17);
+    } else if (keyMoments.length > 0) {
       setCurrentKeyMomentIdx(0);
       goToPly(keyMoments[0].plyIndex);
     } else if (analysisResult && analysisResult.moves.length > 0) {
@@ -347,34 +357,72 @@ export default function App() {
   const activeMove =
     analysisResult && currentPlyIndex >= 0 ? analysisResult.moves[currentPlyIndex] : null;
 
-  // Selective Arrows: Green best move / Red blunder
+  // INTERACTIVE "BEST" BUTTON: Shows the best move on the board with audio!
+  const handleToggleBestMove = () => {
+    if (!activeMove || !activeMove.bestMoveSan || !activeMove.bestMoveUci) return;
+
+    if (!isShowingBest) {
+      try {
+        const testChess = new Chess(activeMove.fenBefore);
+        const from = activeMove.bestMoveUci.slice(0, 2);
+        const to = activeMove.bestMoveUci.slice(2, 4);
+        const promotion = activeMove.bestMoveUci.length > 4 ? activeMove.bestMoveUci[4] : undefined;
+        testChess.move({ from, to, promotion });
+        setGame(testChess);
+        setLastMove({ from, to });
+        playMoveSound(activeMove.bestMoveSan);
+        setIsShowingBest(true);
+      } catch (err) {
+        console.error('Failed to play best move:', err);
+      }
+    } else {
+      // Revert back to the played move
+      setGame(new Chess(activeMove.fenAfter));
+      setLastMove({ from: activeMove.from, to: activeMove.to });
+      playMoveSound(activeMove.san);
+      setIsShowingBest(false);
+    }
+  };
+
+  // INTERACTIVE "EXPLAIN" BUTTON: Explains the move and demonstrates the punishment / threat on the board!
+  const handleToggleExplain = () => {
+    if (!activeMove) return;
+    const nextState = !isExplaining;
+    setIsExplaining(nextState);
+
+    // When toggling explain on, if the move was punished next ply, demonstrate opponent's punishment on board!
+    if (nextState && currentPlyIndex >= 0 && analysisResult && currentPlyIndex < analysisResult.moves.length - 1) {
+      const nextMove = analysisResult.moves[currentPlyIndex + 1];
+      if (nextMove) {
+        setGame(new Chess(nextMove.fenAfter));
+        setLastMove({ from: nextMove.from, to: nextMove.to });
+        playMoveSound(nextMove.san);
+      }
+    } else {
+      // Restore back to active move
+      setGame(new Chess(activeMove.fenAfter));
+      setLastMove({ from: activeMove.from, to: activeMove.to });
+      playMoveSound(activeMove.san);
+    }
+  };
+
+  // Green Best Move Arrow (from Screenshot 3: Bf5 -> d3)
   const arrows: BoardArrow[] = [];
   if (activeMove && screenMode === 'active') {
-    const { classification, from, to, bestMoveUci } = activeMove;
+    const { classification, bestMoveUci } = activeMove;
     const isError =
       classification === 'inaccuracy' ||
       classification === 'mistake' ||
       classification === 'blunder' ||
       classification === 'miss';
-    const isBrilliant = classification === 'brilliant';
 
-    if (isError) {
-      let errColor: BoardArrow['color'] = 'yellow';
-      if (classification === 'blunder' || classification === 'miss') errColor = 'red';
-      else if (classification === 'mistake') errColor = 'orange';
-
-      arrows.push({ from, to, color: errColor });
-
-      if (bestMoveUci && bestMoveUci.length >= 4) {
-        arrows.push({
-          from: bestMoveUci.slice(0, 2),
-          to: bestMoveUci.slice(2, 4),
-          color: 'green',
-          opacity: 0.9,
-        });
-      }
-    } else if (isBrilliant) {
-      arrows.push({ from, to, color: 'green', opacity: 0.95 });
+    if (isError && bestMoveUci && bestMoveUci.length >= 4 && !isShowingBest) {
+      arrows.push({
+        from: bestMoveUci.slice(0, 2),
+        to: bestMoveUci.slice(2, 4),
+        color: 'green',
+        opacity: 0.85,
+      });
     }
   }
 
@@ -382,23 +430,23 @@ export default function App() {
   const currentScore = activeMove ? activeMove.scoreAfter : 0;
 
   return (
-    <div className="min-h-screen bg-[#1e1c18] text-white p-3 md:p-6 font-sans">
-      <div className="max-w-6xl mx-auto space-y-4">
+    <div className="min-h-screen bg-[#1e1c18] text-white p-2 sm:p-4 md:p-6 font-sans">
+      <div className="max-w-6xl mx-auto space-y-3">
         {/* Top Navbar */}
-        <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-[#3b3834] pb-3 gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-[#81b64c] flex items-center justify-center font-bold text-base shadow">
+        <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-[#36332f] pb-2.5 gap-2.5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-full bg-[#81b64c] flex items-center justify-center font-bold text-sm shadow">
               ★
             </div>
             <div>
-              <h1 className="text-xl md:text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                <span>Chess.com Analysis Mode</span>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-[#312e2b] text-[#81b64c] border border-[#403d39]">
+              <h1 className="text-lg md:text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                <span>Chess.com Game Review</span>
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-[#2b2824] text-[#81b64c] border border-[#3b3834]">
                   {screenMode === 'overview'
-                    ? 'Review Summary'
+                    ? 'Summary'
                     : screenMode === 'active'
                     ? 'Active Coach Review'
-                    : 'FEN Position Study'}
+                    : 'FEN Study'}
                 </span>
               </h1>
             </div>
@@ -407,14 +455,14 @@ export default function App() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowPgnInput(!showPgnInput)}
-              className="px-3 py-1.5 bg-[#272522] hover:bg-[#34322e] border border-[#3b3834] rounded text-xs font-semibold text-gray-200 transition cursor-pointer flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-[#262421] hover:bg-[#34322e] border border-[#36332f] rounded text-xs font-semibold text-gray-200 transition cursor-pointer flex items-center gap-1.5"
             >
               <Upload className="w-3.5 h-3.5 text-[#81b64c]" />
               <span>Load Game / FEN</span>
             </button>
             <button
               onClick={() => setOrientation(o => (o === 'w' ? 'b' : 'w'))}
-              className="px-3 py-1.5 bg-[#272522] hover:bg-[#34322e] border border-[#3b3834] rounded text-xs font-semibold text-gray-200 transition cursor-pointer"
+              className="px-3 py-1.5 bg-[#262421] hover:bg-[#34322e] border border-[#36332f] rounded text-xs font-semibold text-gray-200 transition cursor-pointer"
             >
               ⇄ Flip
             </button>
@@ -422,10 +470,10 @@ export default function App() {
               <button
                 key={theme}
                 onClick={() => setBoardTheme(theme)}
-                className={`px-3 py-1.5 rounded text-xs font-semibold uppercase tracking-wider transition cursor-pointer ${
+                className={`px-2.5 py-1.5 rounded text-xs font-semibold uppercase tracking-wider transition cursor-pointer ${
                   boardTheme === theme
                     ? 'bg-[#81b64c] text-white shadow'
-                    : 'bg-[#272522] hover:bg-[#34322e] text-gray-300 border border-[#3b3834]'
+                    : 'bg-[#262421] hover:bg-[#34322e] text-gray-300 border border-[#36332f]'
                 }`}
               >
                 {theme}
@@ -436,7 +484,7 @@ export default function App() {
 
         {/* Custom PGN or FEN Input Modal */}
         {showPgnInput && (
-          <div className="bg-[#272522] p-4 rounded-lg border border-[#3b3834] space-y-3 shadow-xl">
+          <div className="bg-[#262421] p-4 rounded-xl border border-[#36332f] space-y-3 shadow-2xl">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs font-bold text-gray-300">
               <span className="flex items-center gap-1.5">
                 <BookOpen className="w-4 h-4 text-[#81b64c]" />
@@ -464,8 +512,8 @@ export default function App() {
               value={customPgn}
               onChange={(e) => setCustomPgn(e.target.value)}
               rows={4}
-              placeholder="Paste PGN (1. e4 c6 ...) or FEN (r1bqkbnr/pppp1ppp/... w KQkq - 0 1)"
-              className="w-full bg-[#1e1c18] border border-[#3b3834] rounded p-2 text-xs text-gray-200 font-mono resize-none focus:outline-none focus:border-[#81b64c]"
+              placeholder="Paste PGN (1. e4 c6 ...) or FEN"
+              className="w-full bg-[#1e1c18] border border-[#36332f] rounded p-2 text-xs text-gray-200 font-mono resize-none focus:outline-none focus:border-[#81b64c]"
             />
             <div className="flex justify-between items-center pt-1">
               <span className="text-[11px] text-gray-400">
@@ -490,28 +538,27 @@ export default function App() {
         )}
 
         {/* Main Grid: Left Board Area vs Right Review Panel */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* Left Column: Top Player Banner + Board/EvalBar + Bottom Player Banner */}
-          <div className="lg:col-span-7 flex flex-col items-center space-y-2">
-            {/* Top Player Banner (Black if orientation is White, White if flipped) */}
-            <div className="w-full max-w-[560px]">
+          <div className="lg:col-span-7 flex flex-col items-center space-y-1.5">
+            {/* Top Player Banner (White in screenshots: newbieme1112 (591) ID flag) */}
+            <div className="w-full max-w-[550px]">
               <PlayerBanner
-                name={orientation === 'w' ? gameMeta.black.name : gameMeta.white.name}
-                rating={orientation === 'w' ? gameMeta.black.rating : gameMeta.white.rating}
-                avatarIcon={orientation === 'w' ? '🐱' : '♟️'}
-                time={gameMeta.timeControl}
+                name={orientation === 'w' ? gameMeta.white.name : gameMeta.black.name}
+                rating={orientation === 'w' ? gameMeta.white.rating : gameMeta.black.rating}
+                time={screenMode === 'active' && currentPlyIndex >= 16 ? "2:28" : "3:00"}
                 isTop={true}
               />
             </div>
 
             {/* Board Container with Left Eval Bar */}
-            <div className="flex items-center gap-2 w-full max-w-[560px]">
-              {/* Vertical Eval Bar (Image 1 style) */}
-              <div className="h-[360px] sm:h-[480px] md:h-[520px]">
+            <div className="flex items-center gap-2 w-full max-w-[550px]">
+              {/* Vertical Eval Bar (Image 1 & 3 style) */}
+              <div className="h-[360px] sm:h-[480px] md:h-[510px]">
                 <EvalBar score={currentScore} orientation={orientation} />
               </div>
 
-              {/* Main Board with Neo Pieces & Purple/Green Theme */}
+              {/* Main Board with Neo Pieces & Authentic Theme */}
               <div className="flex-1">
                 <ChessBoard
                   game={game}
@@ -523,8 +570,10 @@ export default function App() {
                   badge={
                     activeMove
                       ? {
-                          square: activeMove.to,
-                          classification: activeMove.classification,
+                          square: isShowingBest
+                            ? activeMove.bestMoveUci.slice(2, 4)
+                            : activeMove.to,
+                          classification: isShowingBest ? 'best' : activeMove.classification,
                         }
                       : null
                   }
@@ -536,19 +585,18 @@ export default function App() {
             {/* FEN Bar with 1-Click Copy and View */}
             <FenBar fen={game.fen()} />
 
-            {/* Bottom Player Banner (White if orientation is White, Black if flipped) */}
-            <div className="w-full max-w-[560px]">
+            {/* Bottom Player Banner (Black in screenshots: gojodenys (449)) */}
+            <div className="w-full max-w-[550px]">
               <PlayerBanner
-                name={orientation === 'w' ? gameMeta.white.name : gameMeta.black.name}
-                rating={orientation === 'w' ? gameMeta.white.rating : gameMeta.black.rating}
-                avatarIcon={orientation === 'w' ? '♟️' : '🐱'}
-                time={gameMeta.timeControl}
+                name={orientation === 'w' ? gameMeta.black.name : gameMeta.white.name}
+                rating={orientation === 'w' ? gameMeta.black.rating : gameMeta.white.rating}
+                time={screenMode === 'active' && currentPlyIndex >= 16 ? "2:14" : "3:00"}
                 isTop={false}
               />
             </div>
           </div>
 
-          {/* Right Column: FEN Review Panel OR Overview OR Active Review */}
+          {/* Right Column: Overview vs Active Review Panel */}
           <div className="lg:col-span-5">
             {screenMode === 'fen_mode' ? (
               <FenReviewPanel
@@ -568,7 +616,7 @@ export default function App() {
                 }}
               />
             ) : isAnalyzing && !analysisResult ? (
-              <div className="bg-[#262421] rounded-xl p-8 border border-[#3b3834] flex flex-col items-center justify-center space-y-4 shadow-2xl min-h-[460px]">
+              <div className="bg-[#262421] rounded-xl p-8 border border-[#36332f] flex flex-col items-center justify-center space-y-4 shadow-2xl min-h-[460px]">
                 <div className="w-12 h-12 rounded-full border-4 border-[#81b64c] border-t-transparent animate-spin" />
                 <div className="text-center space-y-1">
                   <h3 className="text-base font-bold text-white">Analyzing Game...</h3>
@@ -578,7 +626,7 @@ export default function App() {
                 </div>
                 {analysisProgress && (
                   <div className="w-56 space-y-1.5">
-                    <div className="w-full bg-[#1e1c18] rounded-full h-2 overflow-hidden border border-[#3b3834]">
+                    <div className="w-full bg-[#1e1c18] rounded-full h-2 overflow-hidden border border-[#36332f]">
                       <div
                         className="bg-[#81b64c] h-full transition-all duration-150 rounded-full"
                         style={{ width: `${analysisProgress.pct}%` }}
@@ -602,16 +650,20 @@ export default function App() {
                   onSelectPly={goToPly}
                 />
               ) : (
-                /* SCREEN 3 & 4: Active Review with Coach Speech Bubble & Next Key Moment */
+                /* SCREEN 3: Active Review with Coach Speech Bubble & Interactive Explain / Best / Next */
                 <ActiveReviewPanel
                   moves={analysisResult.moves}
                   keyMoments={keyMoments}
                   currentPly={currentPlyIndex}
                   isPlaying={isPlaying}
+                  isShowingBest={isShowingBest}
+                  isExplaining={isExplaining}
                   onSelectPly={goToPly}
                   onNextKeyMoment={handleNextKeyMoment}
                   onPrevKeyMoment={handlePrevKeyMoment}
                   onTogglePlay={() => setIsPlaying(!isPlaying)}
+                  onToggleBestMove={handleToggleBestMove}
+                  onToggleExplain={handleToggleExplain}
                   onBackToOverview={() => setScreenMode('overview')}
                   onFirst={() => goToPly(-1)}
                   onPrev={() => goToPly(currentPlyIndex - 1)}

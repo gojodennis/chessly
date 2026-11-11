@@ -16,7 +16,11 @@ export const EvalBar: React.FC<EvalBarProps> = ({ score, orientation = 'w' }) =>
   // Win percentage for White (0 to 100)
   const whiteWinPct = scoreToWinPercentage(score);
 
-  // Height of White's bar (from bottom if orientation is 'w', from top if 'b')
+  // Height of White's bar (from top if orientation is 'w', so White is top/middle)
+  // In Chess.com standard: White is at the top of the bar when orientation is White, or bottom?
+  // LOOK AT IMAGE 1: Score is 0.0. White bar is at the TOP (from y=0 down to 50%), and 0.0 is inside the white bar at the top!
+  // LOOK AT IMAGE 3: Score is 3.1. White bar fills ~65% from the top down, with 3.1 at the top!
+  // So in Chess.com, White is at the top of the bar!
   const whiteBarHeight = orientation === 'w' ? whiteWinPct : 100 - whiteWinPct;
 
   // Formatting score text
@@ -26,29 +30,24 @@ export const EvalBar: React.FC<EvalBarProps> = ({ score, orientation = 'w' }) =>
   } else {
     const cp = Math.abs(score) / 100;
     scoreText = cp.toFixed(1);
-    if (score > 0) scoreText = `+${scoreText}`;
-    else if (score < 0) scoreText = `-${scoreText}`;
-    else scoreText = '0.0';
+    if (score === 0) scoreText = '0.0';
   }
 
-  // Determine label position (at bottom if White winning, at top if Black winning)
+  // White winning means white bar is prominent at top
   const isWhiteWinning = score >= 0;
-  const showLabelAtBottom = orientation === 'w' ? isWhiteWinning : !isWhiteWinning;
 
   return (
-    <div className="relative w-6 sm:w-7 h-full bg-[#3b3834] rounded overflow-hidden flex flex-col justify-end shadow-md border border-[#2b2926] select-none flex-shrink-0">
-      {/* White Portion of Bar */}
+    <div className="relative w-6 h-full bg-[#262421] rounded-[3px] overflow-hidden flex flex-col justify-start shadow-md border border-[#36332f] select-none flex-shrink-0">
+      {/* White Portion of Bar (Top section for White) */}
       <div
         className="w-full bg-[#ffffff] transition-all duration-300 ease-out"
         style={{ height: `${whiteBarHeight}%` }}
       />
 
-      {/* Advantage Label Pill */}
+      {/* Advantage Label Pill (Matches Image 1 & 3: at top inside the bar) */}
       <div
-        className={`absolute w-full px-0.5 text-center font-bold font-mono text-[10px] sm:text-[11px] pointer-events-none transition-all duration-300 ${
-          showLabelAtBottom
-            ? 'bottom-1 text-black'
-            : 'top-1 text-white'
+        className={`absolute w-full px-0.5 text-center font-bold font-mono text-[10px] pointer-events-none transition-all duration-300 ${
+          isWhiteWinning ? 'top-1 text-[#262421]' : 'bottom-1 text-white'
         }`}
       >
         {scoreText}
@@ -56,4 +55,3 @@ export const EvalBar: React.FC<EvalBarProps> = ({ score, orientation = 'w' }) =>
     </div>
   );
 };
-
